@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Damás - Jogo de Damas (regras atualizadas)</title>
+  <style>
+    :root{
+      --dark: #2b2b2b;
+      --dark2: #1e1e1e;
+      --light: #f0f0f0;
+      --board-dark: #2c2c2c;
+      --board-light: #e8e8e8;
+      --red: #e74c3c;
+      --blue: #3498db;
+      --green: #2ecc71;
+      --yellow: #f1c40f;
+      --king: linear-gradient(135deg, #ffd700 0%, #ff8c00 100%);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial; background: #111; color: #fff; }
+    header { display:flex; justify-content: space-between; align-items:center; padding: 12px 16px; background: linear-gradient(135deg, #8e2de2, #4a00e0); color:white; }
+    header h1{ font-size: 1.1rem; margin:0; }
+    .container{ display:flex; gap: 16px; max-width: 1100px; margin: 18px auto; padding: 0 12px; }
+
+    /* Board */
+    #board{ width: min(90vw, 540px); aspect-ratio: 1; display:grid; grid-template-columns: repeat(8, 1fr); border-radius: 12px; overflow: hidden; border: 2px solid #333; }
+    .cell{ width: 100%; height: 100%; display:flex; align-items:center; justify-content:center; position: relative; }
+    .dark{ background: #2b2b2b; cursor: pointer; }
+    .light{ background: #d3d3d3; cursor: default; }
+
+    .piece{ width: 70%; height: 70%; border-radius: 50%; display:flex; align-items:center; justify-content:center; color:white; font-weight:700; border:2px solid rgba(255,255,255,.8); }
+    .whiteP{ background: radial-gradient(circle at 30% 30%, #fff 0%, #ddd 40%, #bbb 100%); color:#111; border:2px solid #ddd; }
+    .blackP{ background: radial-gradient(circle at 30% 30%, #333 0%, #111 60%); border:2px solid #000; }
+    .whiteKing{ background: conic-gradient(#ffd700 0%, #ff8c00 100%); color:#000; } /* coroação visual */
+    .blackKing{ background: conic-gradient(#ffd700 0%, #ff0000 100%); color:#000; }
+
+    .hint{ outline: 3px solid rgba(52, 226, 178, 0.9); outline-offset: -6px; }
+    .selected{ outline: 3px solid rgba(52, 226, 178, 0.9); outline-offset: -6px; }
+    .hoverable:hover{ filter: brightness(1.08); }
+
+    /* Sidebar / HUD */
+    aside{ min-width: 260px; flex: 1; display:flex; flex-direction:column; gap:12px; }
+    .panel{ background: rgba(255,255,255,.04); border:1px solid #333; border-radius:12px; padding:12px; }
+    .panel-header{ display:flex; justify-content:space-between; align-items:center; font-weight:700; margin-bottom:6px; }
+    .btn{ padding:10px 12px; border-radius:8px; border:0; cursor:pointer; background:#1f1f1f; color:white; font-weight:700; }
+    .btn.primary{ background: linear-gradient(135deg, #4cd964, #2ecc71); }
+    .btn.secondary{ background: #333; }
+    .turn{ padding:6px 10px; border-radius:6px; font-weight:700; display:inline-block; }
+    .turn.white{ background: #0b0f14; color:white; border:1px solid #fff; }
+    .turn.black{ background: #111; color:white; border:1px solid #fff; }
+
+    @media (max-width: 900px){
+      .container{ flex-direction:column; }
+      aside{ order: -1; width: 100%; }
+      #board{ width: min(92vw, 360px); }
+    }
+
+    /* Status text */
+    #status{ font-size: 0.95rem; line-height: 1.4; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Damás - Jogo de Damas (regras atualizadas)</h1>
+    <div>
+      <span style="margin-right:8px;">Vs IA</span>
+      <label style="display:inline-flex; align-items:center; gap:6px;">
+        <input type="checkbox" id="aiToggle" />
+        <span style="font-size:.9rem;">Ativar</span>
+      </label>
+    </div>
+  </header>
+
+  <main class="container">
+    <section id="board" aria-label="Tabuleiro de damas"></section>
+
+    <aside class="panel" aria-label="Painel de controle">
+      <div class="panel-header">
+        <span>Painel</span>
+        <button class="btn" id="resetBtn" title="Reiniciar jogo">Reiniciar</button>
+      </div>
+      <div id="status" class="panel" style="border-radius:8px; padding:10px; background:#111; border:1px solid #333;">
+        Turno: <strong id="turnText">Brancas</strong><br/>
+        Movimento: <span id="moveInfo">Selecione uma peça</span>
+      </div>
+      <div class="panel" id="legend" aria-label="Legendas de jogadas">
+        <div class="panel-header" style="margin-bottom:6px;">Legendas</div>
+        <div style="font-size:.9rem; color:#ddd;">
+          - Peças brancas movem para cima; pretas movem para baixo.
+          <br> - Captura opcional. Você pode capturar ou não, conforme desejar.
+          <br> - Quando chega na última linha, vira rei.
+        </div>
+      </div>
+      <div class="panel">
+        <label><input type="checkbox" id="debugMode" /> Mostrar modo debug (console)</label>
+      </div>
+    </aside>
+  </main>
+
+  <script>
+    // Damás (Checkers) - Lógica com captura opcional + damas (rei) com movimento longo
+    const SIZE = 8;
+    let board = [];
+    let turn = 'white'; // 'white' (brancas) começa
+    let selected = null; // {r,c} da peça selecionada
+    let movesForSelected = []; // lista de jogadas válidas do selected
+    let ongoingCapture = null; // se estamos em meio a captura múltipla (continuação)
+    let vsAI = false;
+    const aiColor = 'black'; // IA joga como 'black'
+    const boardEl = document.getElementById('board');
+    const turnText = document.getElementById('turnText');
+    const moveInfo = document.getElementById('moveInfo');
+    const resetBtn = document.getElementById('resetBtn');
+    const aiToggle = document.getElementById('aiToggle');
+    const debugMode = document.getElementById('debugMode');
+
+    // utilidades
+    function inBounds(r,c){ return r>=0 && r<SIZE && c>=0 && c<SIZE; }
+    function isPlayable(r,c){ return inBounds(r,c) && ((r+c)%2===1); }
+
+    // Direções
+    function getSimpleDirs(piece){
+      if(piece.king){
+        // para damas (rei): não limitado a uma única casa
+        return [[-1,-1],[-1,1],[1,-1],[1,1]]; // ainda usamos esse para geração básica, mas vamos expandir para king longo
+      }
+      // não coroada: forward apenas
+      return piece.color==='white' ? [[-1,-1], [-1,1]] : [[1,-1], [1,1]];
+    }
+
+    // Capturas (direções) - para não-king usamos diagonais adjacentes de captura; para king usamos captura com king usando captura à distância (fly)
+    function getCaptureDirs(piece){
+      // para captura, permitir qualquer diagonal (captura pode ser para frente ou trás)
+      return [[-1,-1],[-1,1],[1,-1],[1,1]];
+    }
+
+    function pieceAt(r,c){
+      return inBounds(r,c) ? board[r][c] : null;
+    }
+
+    function anyCaptureAvailable(color){
+      // OBS: captura não é obrigatória neste modo
+      // Mantido para compatibilidade com outras partes do código, mas não impede ações sem captura
+      for(let r=0; r<SIZE; r++){
+        for(let c=0; c<SIZE; c++){
+          const p = board[r][c];
+          if(p && p.color===color){
+            const dirs = getCaptureDirs(p);
+            for(const [dr,dc] of dirs){
+              const ar = r+dr, ac = c+dc;
+              const br = r+2*dr, bc = c+2*dc;
+              if(inBounds(br,bc) && isPlayable(br,bc) && board[br][bc]===null){
+                const mid = board[ar] && board[ar][ac];
+                if(mid && mid.color !== color){
+                  return true;
+                }
+              }
+            }
+          }
+        }
+      }
+      return false;
+    }
+
+    // Moves para uma peça (capturas podem existir; não são obrigatórias)
+    function getMovesForPiece(r,c){
+      const p = pieceAt(r,c);
+      if(!p || p.color !== turn) return [];
+      const moves = [];
+
+      // Capturas (inclui captura com damas de longo alcance)
+      // King long-range capture (fly king)
+      if(p.king){
+        // percorre cada diagonal e tenta capturar qualquer peça inimiga com aterrissagem ao longo da diagonal
+        const dirs = [[-1,-1],[-1,1],[1,-1],[1,1]];
+        for(const [dr,dc] of dirs){
+          let er = r + dr;
+          let ec = c + dc;
+          // andar até encontrar a primeira peça inimiga sem obstáculos
+          while(inBounds(er,ec) && isPlayable(er,ec) && board[er][ec] === null){
+            er += dr; ec += dc;
+          }
+          // se encontramos uma peça inimiga imediatamente após uma sequência de vazios
+          if(inBounds(er,ec) && isPlayable(er,ec)){
+            const mid = board[er][ec];
+            if(mid && mid.color !== p.color){
+              // aterrissagem possível após o inimigo ao longo da mesma diagonal
+              let lr = er + dr, lc = ec + dc;
+              while(inBounds(lr,lc) && isPlayable(lr,lc) && board[lr][lc] === null){
+                moves.push({ from:[r,c], to:[lr,lc], capture:true, captured:[er,ec] });
+                lr += dr; lc += dc;
+              }
+            }
+          }
+        }
+      } else {
+        // damas normais (não king): captura simples adjacente (two-step) na diagonal
+        for(const [dr,dc] of getCaptureDirs(p)){
+          const ar = r+dr, ac = c+dc;
+          const br = r+2*dr, bc = c+2*dc;
+          if(inBounds(br,bc) && isPlayable(br,bc) && board[br][bc]===null){
+            const mid = board[ar] && board[ar][ac];
+            if(mid && mid.color !== turn){
+              moves.push({ from:[r,c], to:[br,bc], capture:true, captured:[ar,ac] });
+            }
+          }
+        }
+      }
+
+      // Movimentos simples
+      if(p.king){
+        // damas (rei) podem mover longamente nas diagonais
+        const dirs = [[-1,-1],[-1,1],[1,-1],[1,1]];
+        for(const [dr,dc] of dirs){
+          let nr = r + dr, nc = c + dc;
+          while(inBounds(nr,nc) && isPlayable(nr,nc) && board[nr][nc] === null){
+            moves.push({ from:[r,c], to:[nr,nc], capture:false });
+            nr += dr; nc += dc;
+          }
+        }
+      } else {
+        // peões normais movem apenas um passo adiante (forward)
+        const dirs = getSimpleDirs(p);
+        for(const [dr,dc] of dirs){
+          const nr = r + dr, nc = c + dc;
+          if(inBounds(nr,nc) && isPlayable(nr,nc) && board[nr][nc] === null){
+            moves.push({ from:[r,c], to:[nr,nc], capture:false });
+          }
+        }
+      }
+
+      // Observação: não filtramos por capturas obrigatórias; retornamos tanto capturas quanto simples
+      return moves;
+    }
+
+    function getCaptureMovesForPiece(r,c){
+      const p = pieceAt(r,c);
+      if(!p || p.color !== turn) return [];
+      const caps = [];
+      if(p.king){
+        // capturas de damas (fly king)
+        const dirs = [[-1,-1],[-1,1],[1,-1],[1,1]];
+        for(const [dr,dc] of dirs){
+          let er = r + dr, ec = c + dc;
+          // avança até encontrar a primeira peça inimiga sem obstáculos
+          while(inBounds(er,ec) && isPlayable(er,ec) && board[er][ec] === null){
+            er += dr; ec += dc;
+          }
+          if(inBounds(er,ec) && isPlayable(er,ec)){
+            const mid = board[er] && board[er][ec];
+            if(mid && mid.color !== p.color){
+              // aterrissagem possível após o inimigo ao longo da mesma diagonal
+              let lr = er + dr, lc = ec + dc;
+              while(inBounds(lr,lc) && isPlayable(lr,lc) && board[lr][lc] === null){
+                caps.push({ to:[lr,lc], captured:[er,ec] });
+                lr += dr; lc += dc;
+              }
+            }
+          }
+        }
+      } else {
+        // capturas de peões normais (adjacentes)
+        for(const [dr,dc] of getCaptureDirs(p)){
+          const ar = r+dr, ac = c+dc;
+          const br = r+2*dr, bc = c+2*dc;
+          if(inBounds(br,bc) && isPlayable(br,bc) && board[br][bc] === null){
+            const mid = board[ar] && board[ar][ac];
+            if(mid && mid.color !== turn){
+              caps.push({ to:[br,bc], captured:[ar,ac] });
+            }
+          }
+        }
+      }
+      return caps;
+    }
+
+    function updateStatus(){
+      turnText.textContent = (turn === 'white') ? 'Brancas' : 'Pretas';
+    }
+
+    // Render do tabuleiro
+    function render(){
+      boardEl.innerHTML = '';
+      for(let r=0; r<SIZE; r++){
+        for(let c=0; c<SIZE; c++){
+          const cell = document.createElement('div');
+          cell.className = 'cell ' + ((r+c)%2===1 ? 'dark' : 'light');
+          cell.dataset.r = r;
+          cell.dataset.c = c;
+          if((r+c)%2===1){
+            cell.addEventListener('click', onCellClick);
+            const p = board[r][c];
+            if(p){
+              const piece = document.createElement('div');
+              piece.className = 'piece ' + (p.color==='white' ? 'whiteP' : 'blackP');
+              if(p.king){
+                piece.style.boxShadow = '0 0 0 4px rgba(255,215,0,.5)';
+                piece.classList.add('whiteKing');
+              }
+              piece.title = p.color + (p.king ? ' King' : ' Piece');
+              cell.appendChild(piece);
+            }
+          } else {
+            cell.style.opacity = 0.6;
+          }
+          boardEl.appendChild(cell);
+        }
+      }
+      // Destaques da peça selecionada
+      if(selected){
+        const moves = movesForSelected;
+        moves.forEach(m => {
+          const idx = m.to[0]*8 + m.to[1];
+          const cell = boardEl.children[idx];
+          if(cell) cell.classList.add('hint');
+        });
+      }
+    }
+
+    // Ações do jogador
+    function onCellClick(e){
+      const r = parseInt(e.currentTarget.dataset.r, 10);
+      const c = parseInt(e.currentTarget.dataset.c, 10);
+      if(!isPlayable(r,c)) return;
+
+      // Se estamos em captura contínua (multi-jump)
+      if(ongoingCapture){
+        const caps = getCaptureMovesForPiece(ongoingCapture.r, ongoingCapture.c);
+        const move = caps.find(m => m.to[0]===r && m.to[1]===c);
+        if(move){
+          performMove(ongoingCapture.r, ongoingCapture.c, r, c, true, move.captured);
+        }
+        return;
+      }
+
+      const clickedPiece = pieceAt(r,c);
+
+      if(selected){
+        const move = movesForSelected.find(m => m.to[0]===r && m.to[1]===c);
+        if(move){
+          performMove(move.from[0], move.from[1], r, c, !!move.capture, move.captured || null);
+        } else if(clickedPiece && clickedPiece.color===turn){
+          // Tentar selecionar outra peça
+          const movesFrom = getMovesForPiece(r,c);
+          // Como captura é opcional, não bloqueamos seleção com base em captura
+          if(movesFrom.length>0){
+            selected = { r, c };
+            movesForSelected = movesFrom;
+            render();
+          }
+        }
+      } else {
+        if(clickedPiece && clickedPiece.color===turn){
+          const movesFrom = getMovesForPiece(r,c);
+          if(movesFrom.length>0){
+            selected = { r, c };
+            movesForSelected = movesFrom;
+            render();
+          }
+        }
+      }
+    }
+
+    // Util: getPieceMovesFrom usada em fluxo de captura encadeada
+    function getPieceMovesFrom(r,c, onlyCaptures=false){
+      const p = pieceAt(r,c);
+      if(!p || p.color!==turn) return [];
+      const moves = [];
+      // capturas
+      for(const [dr,dc] of getCaptureDirs(p)){
+        const ar = r+dr, ac = c+dc;
+        const br = r+2*dr, bc = c+2*dc;
+        if(inBounds(br,bc) && isPlayable(br,bc) && board[br][bc]===null){
+          const mid = board[ar] && board[ar][ac];
+          if(mid && mid.color !== turn){
+            moves.push({ from:[r,c], to:[br,bc], capture:true, captured:[ar,ac] });
+          }
+        }
+      }
+      if(p.king){
+        // capturas de dama (fly king) já incluídas acima; não há necessidade de duplicar
+      }
+      // simples
+      if(p.king){
+        // long range simples para damas
+        const dirs = [[-1,-1],[-1,1],[1,-1],[1,1]];
+        for(const [dr,dc] of dirs){
+          let nr = r + dr, nc = c + dc;
+          while(inBounds(nr,nc) && isPlayable(nr,nc) && board[nr][nc] === null){
+            moves.push({ from:[r,c], to:[nr,nc], capture:false });
+            nr += dr; nc += dc;
+          }
+        }
+      } else {
+        for(const [dr,dc] of getSimpleDirs(p)){
+          const nr = r+dr, nc = c+dc;
+          if(inBounds(nr,nc) && isPlayable(nr,nc) && board[nr][nc]===null){
+            moves.push({ from:[r,c], to:[nr,nc], capture:false });
+          }
+        }
+      }
+      return moves;
+    }
+
+    function performMove(r1,c1,r2,c2, isCapture, capturedPos){
+      // move peça
+      const piece = board[r1][c1];
+      if(!piece){
+        console.error("Erro: peça inexistente");
+        return;
+      }
+      board[r1][c1] = null;
+      board[r2][c2] = piece;
+
+      // captura
+      if(isCapture){
+        if(Array.isArray(capturedPos)){
+          const [cr,cc] = capturedPos;
+          board[cr][cc] = null;
+        } else {
+          // captura com posição disponível no meio (busca direta)
+          const dr = Math.sign(r2 - r1);
+          const dc = Math.sign(c2 - c1);
+          const cr = r1 + dr;
+          const cc = c1 + dc;
+          if(inBounds(cr,cc) && board[cr][cc] && board[cr][cc].color !== piece.color){
+            board[cr][cc] = null;
+          }
+        }
+      }
+
+      // coroação
+      if(piece.color==='white' && r2===0 && !piece.king){
+        piece.king = true;
+      }
+      if(piece.color==='black' && r2===7 && !piece.king){
+        piece.king = true;
+      }
+
+      // verifica se há mais captures com a mesma peça
+      const moreCaptures = getCaptureMovesForPiece(r2,c2).length>0;
+      if(isCapture && moreCaptures){
+        // continua com a mesma peça (captura múltipla)
+        ongoingCapture = { r: r2, c: c2 };
+        selected = { r: r2, c: c2 };
+        movesForSelected = getCaptureMovesForPiece(r2,c2).map(m => ({
+          from:[r2,c2], to:m.to, capture:true, captured: m.captured
+        }));
+      } else {
+        // fim do turno
+        ongoingCapture = null;
+        selected = null;
+        movesForSelected = [];
+        turn = (turn === 'white') ? 'black' : 'white';
+      }
+
+      render();
+      updateStatus();
+
+      // IA
+      if(aiToggle && aiToggle.checked){
+        vsAI = true;
+        if(turn === aiColor){
+          setTimeout(aiMove, 350);
+        }
+      }
+
+      // fim de jogo simples (aviso)
+      checkEndGame();
+    }
+
+    function checkEndGame(){
+      const whiteExists = board.flat().some(p => p && p.color==='white');
+      const blackExists = board.flat().some(p => p.color==='black');
+      if(!whiteExists){
+        alert('Pretas venceram!');
+        return true;
+      }
+      if(!blackExists){
+        alert('Brancas venceram!');
+        return true;
+      }
+      const whiteMoves = getAllMoves('white');
+      const blackMoves = getAllMoves('black');
+      if(turn==='white' && whiteMoves.length===0){
+        alert('Nenhum movimento para Brancas. Pretas vencem!');
+        return true;
+      }
+      if(turn==='black' && blackMoves.length===0){
+        alert('Nenhum movimento para Pretas. Brancas vencem!');
+        return true;
+      }
+      return false;
+    }
+
+    function getAllMoves(color){
+      const all = [];
+      // capturas
+      for(let r=0; r<SIZE; r++){
+        for(let c=0; c<SIZE; c++){
+          const p = board[r][c];
+          if(p && p.color===color){
+            const caps = getCaptureMovesForPiece(r,c);
+            caps.forEach(m => {
+              all.push({ from:[r,c], to:m.to, capture:true, captured: m.captured });
+            });
+          }
+        }
+      }
+      if(all.length>0) return all;
+
+      // simples
+      for(let r=0; r<SIZE; r++){
+        for(let c=0; c<SIZE; c++){
+          const p = board[r][c];
+          if(p && p.color===color){
+            const moves = getMovesForPiece(r,c);
+            moves.filter(m => !m.capture).forEach(m => {
+              all.push(m);
+            });
+          }
+        }
+      }
+      return all;
+    }
+
+    function resetGame(){
+      newBoard();
+    }
+
+    // Tabuleiro inicial
+    function newBoard(){
+      board = Array.from({length: SIZE}, () => Array(SIZE).fill(null));
+      // inicia posição: brancas na base (linhas 5-7), pretas no topo (0-2) em casas escuras (r+c)%2===1
+      for(let r=0; r<SIZE; r++){
+        for(let c=0; c<SIZE; c++){
+          if((r+c)%2===1){
+            if(r<3){
+              board[r][c] = { color:'black', king:false };
+            } else if(r>4){
+              board[r][c] = { color:'white', king:false };
+            } else {
+              board[r][c] = null;
+            }
+          } else {
+            board[r][c] = null;
+          }
+        }
+      }
+      turn = 'white';
+      selected = null;
+      movesForSelected = [];
+      ongoingCapture = null;
+      render();
+      updateStatus();
+    }
+
+    // IA simples: captura quando possível; caso contrário move aleatório
+    function aiMove(){
+      const color = aiColor;
+      // capturas (fly king também)
+      const allCaptures = [];
+      for(let r=0; r<SIZE; r++){
+        for(let c=0; c<SIZE; c++){
+          const p = board[r][c];
+          if(p && p.color===color){
+            const caps = getCaptureMovesForPiece(r,c);
+            caps.forEach(cap => {
+              allCaptures.push({ from:[r,c], to: cap.to, captured: cap.captured });
+            });
+          }
+        }
+      }
+      if(allCaptures.length>0){
+        const pick = allCaptures[Math.floor(Math.random()*allCaptures.length)];
+        performMove(pick.from[0], pick.from[1], pick.to[0], pick.to[1], true, pick.captured);
+        // chain capturas se houver
+        while (ongoingCapture){
+          const cr = ongoingCapture.r, cc = ongoingCapture.c;
+          const caps = getCaptureMovesForPiece(cr, cc);
+          if(caps.length===0) break;
+          const next = caps[0];
+          performMove(cr, cc, next.to[0], next.to[1], true, next.captured);
+        }
+        return;
+      }
+
+      // movimentos simples
+      const allMoves = [];
+      for(let r=0; r<SIZE; r++){
+        for(let c=0; c<SIZE; c++){
+          const p = board[r][c];
+          if(p && p.color===color){
+            const moves = getMovesForPiece(r,c);
+            moves.forEach(m => {
+              if(!m.capture) allMoves.push(m);
+            });
+          }
+        }
+      }
+      if(allMoves.length>0){
+        const m = allMoves[Math.floor(Math.random()*allMoves.length)];
+        performMove(m.from[0], m.from[1], m.to[0], m.to[1], false, null);
+      } else {
+        alert('Fim de jogo. Você venceu!'); // humano vence
+      }
+    }
+
+    // Init
+    function init(){
+      newBoard();
+      resetBtn.addEventListener('click', resetGame);
+      aiToggle.addEventListener('change', () => {
+        vsAI = aiToggle.checked;
+        newBoard();
+      });
+    }
+
+    // Iniciar
+    init();
+
+  </script>
+</body>
+</html>
